@@ -1,0 +1,24 @@
+{
+    "manifest_version": 3,
+    "name": "EasyRead",
+    "version": "1.0",
+    "description": "Enhance your browsing experience by adjusting text size, spacing, highlighting, and speech.",
+    "icons": {
+        "128": "icons/easyRead_logo.png"
+    },
+    "permissions": ["contextMenus", "scripting", "activeTab", "storage"],
+    "host_permissions": ["<all_urls>"],
+    "action": {
+        "default_icon": "icons/easyRead_logo.png",
+        "default_popup": "popup.html"
+    },
+    "background": {
+        "service_worker": "background.js"
+    },
+    "content_scripts": [
+        {
+            "matches": ["<all_urls>"],
+            "js": ["content.js"]
+        }
+    ]
+}
