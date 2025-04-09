@@ -12,7 +12,7 @@ chrome.runtime.onMessage.addListener((request) => {
     }
 });
 
-// === Core Action Handler ===
+// === Perform Action Based on Message ===
 function performContextAction(action, selectedText) {
     const selection = window.getSelection();
     if (!selection.rangeCount) return;
@@ -20,14 +20,12 @@ function performContextAction(action, selectedText) {
     const range = selection.getRangeAt(0);
     const parentEl = range.startContainer.parentElement;
 
-    // Assign ID if missing (not used in restoration anymore but kept for traceability)
+    // Assign ID if missing (not used for matching now but kept for completeness)
     if (!parentEl.id) {
         parentEl.id = `easyread-id-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
     }
 
-    const elementId = parentEl.id;
-
-    function wrapSelection(styleObj) {
+    function wrapSelection(styleObj, actionName) {
         const span = document.createElement("span");
         const highlightId = `highlightedId-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
@@ -46,36 +44,35 @@ function performContextAction(action, selectedText) {
             return;
         }
 
-        const domain = window.location.hostname;
-        const tagName = parentEl.tagName;
-        const textSnippet = fullText.slice(0, 50); // help identify fallback
-
         range.deleteContents();
         range.insertNode(span);
 
-        const obj = {
-            domain,
-            elementId,
-            endOffset,
-            highlightedId: highlightId,
-            startOffset,
-            tagName,
-            text: selectedText,
-            textSnippet
-        };
+        if (actionName === "highlight") {
+            const domain = window.location.hostname;
+            const tagName = parentEl.tagName;
+            const textSnippet = fullText.slice(0, 50);
 
-        const key = highlightId;
+            const obj = {
+                domain,
+                elementId: parentEl.id,
+                endOffset,
+                highlightedId: highlightId,
+                startOffset,
+                tagName,
+                text: selectedText,
+                textSnippet
+            };
 
-        chrome.storage.local.get(["highlightedItems"], (data) => {
-            const current = data.highlightedItems || [];
-            current.push({
-                key,
-                value: JSON.stringify(obj)
+            const key = highlightId;
+
+            chrome.storage.local.get(["highlightedItems"], (data) => {
+                const current = data.highlightedItems || [];
+                current.push({ key, value: JSON.stringify(obj) });
+                chrome.storage.local.set({ highlightedItems: current }, () => {
+                    console.log("✅ Highlight stored:", obj);
+                });
             });
-            chrome.storage.local.set({ highlightedItems: current }, () => {
-                console.log("✅ Highlight stored:", obj);
-            });
-        });
+        }
     }
 
     function removeSelectionHighlight() {
@@ -99,41 +96,62 @@ function performContextAction(action, selectedText) {
         }
     }
 
+    function removeFontSizeSpans() {
+        const selection = window.getSelection();
+        if (!selection.rangeCount) return;
+    
+        const range = selection.getRangeAt(0);
+        const node = range.startContainer;
+    
+        // Walk up to find the nearest span
+        let span = node.nodeType === 3 ? node.parentElement : node;
+    
+        while (span && span.tagName !== "SPAN") {
+            span = span.parentElement;
+        }
+    
+        if (
+            span &&
+            span.tagName === "SPAN" &&
+            span.style.fontSize
+        ) {
+            console.log("🧼 Found font-size span:", span);
+    
+            span.style.fontSize = "";
+    
+            // If no other styles remain, unwrap it
+            if (!span.getAttribute("style") || span.getAttribute("style").trim() === "") {
+                const text = span.textContent;
+                const textNode = document.createTextNode(text);
+                span.replaceWith(textNode);
+                console.log("✅ Span unwrapped");
+            } else {
+                console.log("✅ Font-size removed, span kept");
+            }
+        } else {
+            console.log("ℹ️ No font-size span found in selection");
+        }
+    }
+    
+
     switch (action) {
         case "highlight":
-            wrapSelection({ backgroundColor: "rgba(255, 230, 100, 0.4)" });
+            wrapSelection({ backgroundColor: "rgba(255, 230, 100, 0.4)" }, "highlight");
             break;
         case "removeHighlight":
             removeSelectionHighlight();
             break;
         case "increaseFont":
-            wrapSelection({ fontSize: "larger" });
+            wrapSelection({ fontSize: "larger" }, "font"); // temporary only
             break;
         case "resetFont":
-            unwrapStyleFromRange(range, "font-size");
+            removeFontSizeSpans();
             break;
         case "readAloud":
             const utterance = new SpeechSynthesisUtterance(selectedText);
             speechSynthesis.speak(utterance);
             break;
     }
-}
-
-// === Unwrap styling utility ===
-function unwrapStyleFromRange(range, styleProp) {
-    const clone = range.cloneContents();
-    const spans = clone.querySelectorAll(`span[style*="${styleProp}"]`);
-    if (!spans.length) return;
-
-    spans.forEach((span) => {
-        span.style[styleProp] = "";
-        if (!span.getAttribute("style")) {
-            span.replaceWith(...span.childNodes);
-        }
-    });
-
-    range.deleteContents();
-    range.insertNode(clone);
 }
 
 // === Readability ===
@@ -147,7 +165,7 @@ function resetReadabilityStyles() {
     document.body.style.lineHeight = "";
 }
 
-// === Restore Highlights on Page Load ===
+// === Restore Highlights on Load ===
 restoreHighlights();
 window.addEventListener("load", restoreHighlights);
 
@@ -163,7 +181,7 @@ function restoreHighlights() {
 
         console.log("🗃️ Stored highlights:", highlights);
 
-        // Group by tag + snippet
+        // Group highlights by tag + snippet
         const grouped = {};
         highlights.forEach(item => {
             const obj = JSON.parse(item.value);
@@ -202,7 +220,7 @@ function restoreHighlights() {
                     return;
                 }
 
-                html += escapeHTML(text.slice(lastIndex, startOffset)); // plain text
+                html += escapeHTML(text.slice(lastIndex, startOffset));
                 html += `<span class="easyread-highlight" style="background-color: rgba(255, 230, 100, 0.4);" data-highlight-id="${highlightedId}">${escapeHTML(match)}</span>`;
                 lastIndex = endOffset;
             });
@@ -213,7 +231,7 @@ function restoreHighlights() {
     });
 }
 
-// Escape HTML special characters to prevent breaking tags
+// === Escape HTML Helper ===
 function escapeHTML(str) {
     return str.replace(/[&<>"']/g, (m) => ({
         '&': '&amp;',
